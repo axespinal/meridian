@@ -3,63 +3,62 @@
 #include <SPI.h>
 
 // PINS
-#define TFT_CS     6
-#define TFT_RST    9
-#define TFT_DC     8
+#define TFT_CS 6
+#define TFT_RST 9
+#define TFT_DC 8
 
 Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
 
 // 3D Cube Constants
-float cube_vertex[8][3] = {
-  { -20, -20,  20 }, {  20, -20,  20 }, {  20,  20,  20 }, { -20,  20,  20 },
-  { -20, -20, -20 }, {  20, -20, -20 }, {  20,  20, -20 }, { -20,  20, -20 }
-};
-int cube_face[12][2] = {
-  {0,1}, {1,2}, {2,3}, {3,0},
-  {4,5}, {5,6}, {6,7}, {7,4},
-  {0,4}, {1,5}, {2,6}, {3,7}
-};
+float cube_vertex[8][3] = {{-20, -20, 20}, {20, -20, 20},   {20, 20, 20},
+                           {-20, 20, 20},  {-20, -20, -20}, {20, -20, -20},
+                           {20, 20, -20},  {-20, 20, -20}};
+int cube_face[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6},
+                        {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
 
 float angleX = 0, angleY = 0, angleZ = 0;
 
 // Memory for anti-flicker
-int oldProjected2D[8][2]; 
+int oldProjected2D[8][2];
 bool firstFrame = true;
 
 // --- COLOR CORRECTION ---
 // The screen inverts colors for some reason.
-#define REAL_CYAN  ST7735_YELLOW 
+#define REAL_CYAN ST7735_YELLOW
 
 void setup() {
-  tft.initR(INITR_GREENTAB); 
+  tft.initR(INITR_GREENTAB);
 
   tft.fillScreen(ST7735_BLACK);
-  tft.setRotation(0); 
-  
+  tft.setRotation(1);
+
   drawFooter();
 }
 
 void loop() {
-  float sx = sin(angleX); float cx = cos(angleX);
-  float sy = sin(angleY); float cy = cos(angleY);
-  float sz = sin(angleZ); float cz = cos(angleZ);
+  float sx = sin(angleX);
+  float cx = cos(angleX);
+  float sy = sin(angleY);
+  float cy = cos(angleY);
+  float sz = sin(angleZ);
+  float cz = cos(angleZ);
 
-  int xOffset = tft.width() / 2;
-  int yOffset = (tft.height() / 2) - 20;
+  int xOffset = 33;
+  int yOffset = 50;
 
   int newProjected2D[8][2];
 
-  for(int i=0; i<8; i++) {
+  for (int i = 0; i < 8; i++) {
     float x = cube_vertex[i][0];
     float y = cube_vertex[i][1];
     float z = cube_vertex[i][2];
 
-    float xy = cx*y - sx*z;
-    float xz = sx*y + cx*z;
-    float yz = cy*xz - sy*x;
-    float yx = sy*xz + cy*x;
-    float zx = cz*yx - sz*xy;
-    float zy = sz*yx + cz*xy;
+    float xy = cx * y - sx * z;
+    float xz = sx * y + cx * z;
+    float yz = cy * xz - sy * x;
+    float yx = sy * xz + cy * x;
+    float zx = cz * yx - sz * xy;
+    float zy = sz * yx + cz * xy;
 
     float scale = 64 / (100 - yz);
     newProjected2D[i][0] = xOffset + (zx * scale);
@@ -68,26 +67,24 @@ void loop() {
 
   // Erase OLD Cube
   if (!firstFrame) {
-    for(int i=0; i<12; i++) {
-      tft.drawLine(
-        oldProjected2D[cube_face[i][0]][0], oldProjected2D[cube_face[i][0]][1],
-        oldProjected2D[cube_face[i][1]][0], oldProjected2D[cube_face[i][1]][1],
-        ST7735_BLACK
-      );
+    for (int i = 0; i < 12; i++) {
+      tft.drawLine(oldProjected2D[cube_face[i][0]][0],
+                   oldProjected2D[cube_face[i][0]][1],
+                   oldProjected2D[cube_face[i][1]][0],
+                   oldProjected2D[cube_face[i][1]][1], ST7735_BLACK);
     }
   }
 
   // Draw NEW Cube
-  for(int i=0; i<12; i++) {
-    tft.drawLine(
-      newProjected2D[cube_face[i][0]][0], newProjected2D[cube_face[i][0]][1],
-      newProjected2D[cube_face[i][1]][0], newProjected2D[cube_face[i][1]][1],
-      REAL_CYAN 
-    );
+  for (int i = 0; i < 12; i++) {
+    tft.drawLine(newProjected2D[cube_face[i][0]][0],
+                 newProjected2D[cube_face[i][0]][1],
+                 newProjected2D[cube_face[i][1]][0],
+                 newProjected2D[cube_face[i][1]][1], REAL_CYAN);
   }
 
   // Save coords
-  for(int i=0; i<8; i++) {
+  for (int i = 0; i < 8; i++) {
     oldProjected2D[i][0] = newProjected2D[i][0];
     oldProjected2D[i][1] = newProjected2D[i][1];
   }
@@ -101,12 +98,25 @@ void loop() {
 void drawFooter() {
   tft.setTextSize(1);
   tft.setTextColor(ST7735_WHITE);
-  tft.setCursor(10, 130);
-  tft.print("hello, world!");
 
-  tft.setCursor(10, 140);
-  tft.print("[//] axel was here");
+  int x = 65;
+  int y = 35;
+  int spacing = 10;
 
-  tft.setCursor(10, 150);
-  tft.print("2025-11-28");
+  tft.setCursor(x, y);
+  tft.print("[//] meridian");
+
+  tft.setCursor(x, y + spacing);
+  tft.print("axel was here");
+
+  tft.setCursor(x, y + spacing * 2);
+  tft.print("2025-12-27");
+
+  // Footer URL
+  tft.setCursor(5, 100);
+  tft.print("learn more:");
+  tft.setCursor(5, 110);
+  tft.print("https://axelespinal.com/");
+  tft.setCursor(5, 120);
+  tft.print("projects/meridian");
 }

@@ -2,18 +2,36 @@
 #include <Adafruit_ST7735.h>
 #include <SPI.h>
 
+/*
+ nottetris.ino | part of project meridian
+
+ it looks like tetris, but due to international copyright laws, it's not.
+
+ [//] axelespinal.com/projects
+
+ last updated: 2025-12-26
+*/
+
 // --- SCREEN SETUP ---
 #define TFT_CS 6
 #define TFT_RST 9
 #define TFT_DC 8
 
 // --- BUTTON PINS ---
-#define BTN_LEFT A0
-#define BTN_RIGHT A1
-#define BTN_UP A2 // Rotate
-#define BTN_DOWN A3
-#define BTN_HOLD A4 // Reassigned from DROP
-#define BTN_START A5
+// PORT C (Analog Pins)
+#define BTN_LEFT_BIT 0  // A0
+#define BTN_RIGHT_BIT 1 // A1
+#define BTN_UP_BIT 2    // A2
+#define BTN_DOWN_BIT 3  // A3
+#define BTN_MENU_BIT 4  // A4 (Was Hold, Now Menu)
+#define BTN_START_BIT 5 // A5
+
+// PORT D (Digital Pins)
+#define BTN_A_BIT 2 // D2 (Hard Drop)
+#define BTN_B_BIT 4 // D4 (Hold)
+
+#define IS_PRESSED_C(bit) (!(PINC & (1 << bit)))
+#define IS_PRESSED_D(bit) (!(PIND & (1 << bit)))
 
 // Use Standard Library (Green Tab fixes geometry)
 Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
@@ -48,33 +66,37 @@ Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
 #define C_PURPLE ST7735_MAGENTA
 
 // --- GLOBALS ---
-int board[BOARD_W][BOARD_H];
+int8_t board[BOARD_W][BOARD_H];
 
-const uint8_t shapes[7][4][4] = {
-    {{0, 0, 0, 0}, {1, 1, 1, 1}, {0, 0, 0, 0}, {0, 0, 0, 0}}, // I
-    {{0, 0, 0, 0}, {0, 2, 2, 0}, {0, 2, 2, 0}, {0, 0, 0, 0}}, // O
-    {{0, 0, 0, 0}, {0, 0, 3, 3}, {0, 3, 3, 0}, {0, 0, 0, 0}}, // S
-    {{0, 0, 0, 0}, {0, 4, 4, 0}, {0, 0, 4, 4}, {0, 0, 0, 0}}, // Z
-    {{0, 0, 0, 0}, {0, 5, 0, 0}, {0, 5, 5, 5}, {0, 0, 0, 0}}, // J
-    {{0, 0, 0, 0}, {0, 0, 0, 6}, {0, 6, 6, 6}, {0, 0, 0, 0}}, // L
-    {{0, 0, 0, 0}, {0, 0, 7, 0}, {0, 7, 7, 7}, {0, 0, 0, 0}}  // T
+const uint16_t shapes[7][4] PROGMEM = {
+    {0x00F0, 0x4444, 0x0F00, 0x2222}, // I
+    {0x0660, 0x0660, 0x0660, 0x0660}, // O
+    {0x06C0, 0x4620, 0x0360, 0x0462}, // S
+    {0x0C60, 0x2640, 0x0630, 0x0264}, // Z
+    {0x0E20, 0x2260, 0x0470, 0x0644}, // J
+    {0x0E80, 0x6220, 0x0170, 0x0446}, // L
+    {0x0E40, 0x2620, 0x0270, 0x0464}, // T
 };
 
-uint16_t colors[] = {C_BLACK, C_CYAN, C_YELLOW, C_GREEN,
-                     C_RED,   C_BLUE, C_ORANGE, C_PURPLE};
+const uint16_t colors[] PROGMEM = {C_BLACK, C_CYAN, C_YELLOW, C_GREEN,
+                                   C_RED,   C_BLUE, C_ORANGE, C_PURPLE};
 
-int px, py, pRot, pType;
-int nextType;
-int holdType = -1;
+int8_t px, py, pRot, pType;
+int8_t nextType;
+int8_t holdType = -1;
+int8_t lastGhostY = -1; // Cache for optimization
 bool canHold = true;
 
 // 7-bag randomizer
-int bag[7];
-int bagIndex = 7; // Start at 7 to trigger initial shuffle
+int8_t bag[7];
+int8_t bagIndex = 7; // Start at 7 to trigger initial shuffle
 
 // Forward declarations
 void shuffleBag();
 int getNextFromBag();
+void showStartScreen();
+void hardDrop();
+
 long score = 0;
 unsigned long lastDropTime = 0;
 int dropInterval = 800;
@@ -87,21 +109,31 @@ bool prevGameOver = false; // To fix flicker
 
 // Button State Tracking (For "On Release" logic)
 bool lastStartBtn = HIGH;
-bool lastHoldBtn = HIGH;
+bool lastButtonB = HIGH; // Hold
+bool lastButtonA = HIGH; // Hard Drop
+bool lastMenuBtn = HIGH; // Menu
 
 void setup() {
-  pinMode(BTN_LEFT, INPUT_PULLUP);
-  pinMode(BTN_RIGHT, INPUT_PULLUP);
-  pinMode(BTN_UP, INPUT_PULLUP);
-  pinMode(BTN_DOWN, INPUT_PULLUP);
-  pinMode(BTN_HOLD, INPUT_PULLUP);
-  pinMode(BTN_START, INPUT_PULLUP);
+  // Setup pins using A0 base for compatibility
+  for (int i = 0; i <= 5; i++) {
+    pinMode(A0 + i, INPUT_PULLUP);
+  }
+  // Setup Digital Pins
+  pinMode(2, INPUT_PULLUP); // Button A
+  pinMode(4, INPUT_PULLUP); // Button B
 
   tft.initR(INITR_GREENTAB);
   tft.fillScreen(C_BLACK);
   tft.setRotation(1);
 
-  // --- START SCREEN FOR RNG SEEDING ---
+  showStartScreen();
+}
+
+void showStartScreen() {
+  // Wait for Release (Latch) - Prevent accidental re-entry
+  while ((~PINC & 0x3F) != 0 || !digitalRead(2) || !digitalRead(4)) {
+    delay(10);
+  }
 
   tft.fillRect(0, 0, 160, 128, C_BLACK); // Clear full 160x128 landscape
 
@@ -112,77 +144,49 @@ void setup() {
   int startX = 44;
   tft.setCursor(startX, 40);
   tft.setTextColor(C_GREY);
-  tft.print("(not)");
+  tft.print(F("(not)"));
   tft.setTextColor(C_WHITE);
-  tft.print(" tetris");
+  tft.print(F(" tetris"));
 
   // "press any key to start"
   // Center on 160px: (160 - (22*6))/2 = 14
   tft.setCursor(14, 60);
-  tft.print("press any key to start");
+  tft.print(F("press any key to start"));
 
   // Footer (Tethered to bottom 128px)
   tft.setTextColor(C_GREY);
   // Center on 160px: (160 - (17*6))/2 = 29
   tft.setCursor(29, 108);
-  tft.print("[//] axel espinal");
+  tft.print(F("[//] axel espinal"));
 
   // Center on 160px: (160 - (24*6))/2 = 8
   tft.setCursor(8, 118);
-  tft.print("axelespinal.com/projects");
+  tft.print(F("axelespinal.com/projects"));
 
-  // Wait for ANY key press
+  // Wait for ANY key press (Check all bits 0-5 on Port C, plus D2/D4)
+  // Simple check loop
   while (true) {
-    bool pressed = false;
-    if (digitalRead(BTN_LEFT) == LOW)
-      pressed = true;
-    if (digitalRead(BTN_RIGHT) == LOW)
-      pressed = true;
-    if (digitalRead(BTN_UP) == LOW)
-      pressed = true;
-    if (digitalRead(BTN_DOWN) == LOW)
-      pressed = true;
-    if (digitalRead(BTN_HOLD) == LOW)
-      pressed = true;
-    if (digitalRead(BTN_START) == LOW)
-      pressed = true;
-
-    if (pressed) {
-      randomSeed(micros()); // Seed with current time
+    if ((~PINC & 0x3F) != 0 || !digitalRead(2) || !digitalRead(4)) {
+      randomSeed(micros());
       break;
     }
     delay(10);
   }
 
   // Initialize bag and get first piece (Fixing RNG bug)
-  shuffleBag();
-  nextType = getNextFromBag();
-
-  // Clear screen and start game
-  tft.fillScreen(C_BLACK);
-  tft.drawRect(BOARD_X - 2, BOARD_Y - 2, (BOARD_W * BLOCK_SIZE) + 4,
-               (BOARD_H * BLOCK_SIZE) + 4, C_WHITE);
-
-  tft.setTextColor(C_WHITE);
-  tft.setCursor(NEXT_X, NEXT_Y);
-  tft.print("NEXT");
-  tft.drawRect(NEXT_X, NEXT_Y + 9, 30, 30, C_GREY);
-
-  tft.setCursor(HOLD_X, HOLD_Y);
-  tft.print("HOLD");
-  tft.drawRect(HOLD_X, HOLD_Y + 9, 30, 30, C_GREY);
-
-  tft.setCursor(SCORE_X, SCORE_Y - 8);
-  tft.print("SCORE");
-
-  // Footer Text
-  drawFooter();
-
-  updateScore(0);
-  newPiece();
+  resetGame();
 }
 
 void loop() {
+  // --- GLOBAL: CHECK MENU BUTTON ---
+  bool currMenuBtn = IS_PRESSED_C(BTN_MENU_BIT);
+  if (lastMenuBtn == LOW && currMenuBtn == HIGH) {
+    showStartScreen();
+    lastMenuBtn = currMenuBtn;
+    return;
+  }
+  lastMenuBtn = currMenuBtn;
+
   // --- STATE 1: GAME OVER ---
   if (gameOver) {
     if (!prevGameOver) { // Only draw ONCE
@@ -190,7 +194,7 @@ void loop() {
       prevGameOver = true;
     }
     // Check for Restart (On Release)
-    bool currStartBtn = digitalRead(BTN_START);
+    bool currStartBtn = IS_PRESSED_C(BTN_START_BIT);
     if (lastStartBtn == LOW && currStartBtn == HIGH) {
       resetGame();
     }
@@ -200,7 +204,7 @@ void loop() {
 
   // --- STATE 2: PAUSED ---
   // Check Pause Toggle (On Release)
-  bool currStartBtn = digitalRead(BTN_START);
+  bool currStartBtn = IS_PRESSED_C(BTN_START_BIT);
   if (lastStartBtn == LOW && currStartBtn == HIGH) {
     paused = !paused;
     if (paused) {
@@ -231,8 +235,6 @@ void loop() {
     }
     lastDropTime = millis();
   }
-
-  delay(20);
 }
 
 // --- UI HELPERS ---
@@ -248,16 +250,16 @@ void drawFooter() {
   tft.setTextColor(C_GREY);
 
   tft.setCursor(footerX, footerY);
-  tft.print("(not) tetris");
+  tft.print(F("(not) tetris"));
 
   tft.setCursor(footerX, footerY + 10);
-  tft.print("axel espinal");
+  tft.print(F("axel espinal"));
 
   tft.setCursor(footerX, footerY + 20);
-  tft.print("2025-12-20");
+  tft.print(F("2025-12-20"));
 }
 
-void drawStatus(char *text, uint16_t color) {
+void drawStatus(const char *text, uint16_t color) {
   tft.fillRect(STATUS_X, STATUS_Y, 80, 10, C_BLACK);
   tft.setCursor(STATUS_X, STATUS_Y);
   tft.setTextColor(color);
@@ -290,10 +292,12 @@ void drawPreview() {
   int offsetX = NEXT_X + 4;  // Adjusted for visual centering
   int offsetY = NEXT_Y + 14; // Box top + centering offset
 
-  uint16_t color = colors[nextType + 1];
+  uint16_t color = pgm_read_word(&colors[nextType + 1]);
+  uint16_t shape = pgm_read_word(&shapes[nextType][0]); // Default rotation 0
+
   for (int i = 0; i < 4; i++) {
     for (int j = 0; j < 4; j++) {
-      if (shapes[nextType][j][i]) {
+      if ((shape >> (j * 4 + i)) & 1) {
         tft.fillRect(offsetX + i * 5, offsetY + j * 5, 4, 4, color);
       }
     }
@@ -309,10 +313,12 @@ void drawHold() {
   int offsetX = HOLD_X + 4;
   int offsetY = HOLD_Y + 14;
 
-  uint16_t color = (canHold) ? colors[holdType + 1] : C_GREY;
+  uint16_t color = (canHold) ? pgm_read_word(&colors[holdType + 1]) : C_GREY;
+  uint16_t shape = pgm_read_word(&shapes[holdType][0]);
+
   for (int i = 0; i < 4; i++) {
     for (int j = 0; j < 4; j++) {
-      if (shapes[holdType][j][i]) {
+      if ((shape >> (j * 4 + i)) & 1) {
         tft.fillRect(offsetX + i * 5, offsetY + j * 5, 4, 4, color);
       }
     }
@@ -327,17 +333,17 @@ void handleInput() {
   if (millis() - lastInput < 100)
     return;
 
-  if (!digitalRead(BTN_LEFT) && isValidMove(px - 1, py, pRot)) {
+  if (IS_PRESSED_C(BTN_LEFT_BIT) && isValidMove(px - 1, py, pRot)) {
     updatePiecePosition(px - 1, py, pRot);
     lastInput = millis();
   }
-  if (!digitalRead(BTN_RIGHT) && isValidMove(px + 1, py, pRot)) {
+  if (IS_PRESSED_C(BTN_RIGHT_BIT) && isValidMove(px + 1, py, pRot)) {
     updatePiecePosition(px + 1, py, pRot);
     lastInput = millis();
   }
   // -- ROTATE ON RELEASE LOGIC --
   static bool lastUpBtn = HIGH;
-  bool currUpBtn = digitalRead(BTN_UP);
+  bool currUpBtn = IS_PRESSED_C(BTN_UP_BIT);
   if (lastUpBtn == LOW && currUpBtn == HIGH) {
     // Skip rotation for O piece (cube) - it's symmetrical
     if (pType != 1) {
@@ -348,18 +354,26 @@ void handleInput() {
     }
   }
   lastUpBtn = currUpBtn;
-  if (!digitalRead(BTN_DOWN) && isValidMove(px, py + 1, pRot)) {
+
+  if (IS_PRESSED_C(BTN_DOWN_BIT) && isValidMove(px, py + 1, pRot)) {
     updatePiecePosition(px, py + 1, pRot);
     updateScore(1);
     lastInput = millis() - 50;
   }
 
-  // -- HOLD ON RELEASE LOGIC --
-  bool currHoldBtn = digitalRead(BTN_HOLD);
-  if (lastHoldBtn == LOW && currHoldBtn == HIGH) {
+  // -- HOLD ON RELEASE LOGIC (NOW BUTTON B) --
+  bool currBtnB = IS_PRESSED_D(BTN_B_BIT);
+  if (lastButtonB == LOW && currBtnB == HIGH) {
     holdPiece();
   }
-  lastHoldBtn = currHoldBtn;
+  lastButtonB = currBtnB;
+
+  // -- HARD DROP ON RELEASE LOGIC (BUTTON A) --
+  bool currBtnA = IS_PRESSED_D(BTN_A_BIT);
+  if (lastButtonA == LOW && currBtnA == HIGH) {
+    hardDrop();
+  }
+  lastButtonA = currBtnA;
 }
 
 // (Standard Helper Functions remain identical below)
@@ -371,6 +385,7 @@ void newPiece() {
   px = 3;
   py = 0;
   pRot = 0;
+  lastGhostY = getGhostY(px, py, pRot); // Initialize ghost cache
 
   if (!isValidMove(px, py, pRot))
     gameOver = true;
@@ -423,6 +438,16 @@ void holdPiece() {
   drawHold();
 }
 
+void hardDrop() {
+  int dropY = getGhostY(px, py, pRot);
+  // Instant score reward
+  updateScore((dropY - py) * 2);
+  // Draw directly at ghost location
+  updatePiecePosition(px, dropY, pRot);
+  // Lock effectively instantly
+  lockPiece();
+}
+
 void lockPiece() {
   for (int i = 0; i < 4; i++) {
     for (int j = 0; j < 4; j++) {
@@ -470,14 +495,24 @@ void checkLines() {
 
 void updatePiecePosition(int newX, int newY, int newRot) {
   // --- 1. Smart Ghost Update ---
-  int oldGhostY = getGhostY(px, py, pRot);
-  int newGhostY = getGhostY(newX, newY, newRot);
+  int oldGhostY = lastGhostY;
+  int newGhostY;
 
-  // Re-draw ghost ONLY if it moved or if the piece's X/Rot changed (which
-  // changes ghost's X/shape)
+  // Optimization: If X and Rot haven't changed, Ghost Y is likely same (unless
+  // board changed, but updatePiecePosition is for moves) Strict check: if X and
+  // Rot are same, Ghost Y MUST be same because we occupy same column on same
+  // board state.
+  if (newX == px && newRot == pRot) {
+    newGhostY = oldGhostY;
+  } else {
+    newGhostY = getGhostY(newX, newY, newRot);
+  }
+
+  // Check if we essentially moved the ghost
   if (oldGhostY != newGhostY || px != newX || pRot != newRot) {
     eraseGhost(px, oldGhostY, pRot);
     drawGhost(newX, newGhostY, newRot);
+    lastGhostY = newGhostY;
   }
 
   // --- 2. Smart Piece Update (Differential Draw) ---
@@ -530,7 +565,7 @@ void updatePiecePosition(int newX, int newY, int newRot) {
 
   // Draw the new piece (It's okay to overwrite existing pixels, no flicker
   // there)
-  drawPieceHelper(newX, newY, newRot, colors[pType + 1]);
+  drawPieceHelper(newX, newY, newRot, pgm_read_word(&colors[pType + 1]));
 
   // Update globals
   px = newX;
@@ -557,23 +592,17 @@ bool isValidMove(int x, int y, int rot) {
 }
 
 int getShape(int x, int y, int rot) {
-  switch (rot) {
-  case 0:
-    return shapes[pType][y][x];
-  case 1:
-    return shapes[pType][3 - x][y];
-  case 2:
-    return shapes[pType][3 - y][3 - x];
-  case 3:
-    return shapes[pType][x][3 - y];
-  }
-  return 0;
+  // Read pre-calculated bitmask for this rotation
+  // rot 0-3 are stored sequentially in data[4]
+  uint16_t shape = pgm_read_word(&shapes[pType][rot]);
+  // Check bit at appropriate position
+  return (shape >> (y * 4 + x)) & 1;
 }
 
 // Basic helpers still needed for initialization/locking
 void drawPiece() {
   drawGhost(px, getGhostY(px, py, pRot), pRot);
-  drawPieceHelper(px, py, pRot, colors[pType + 1]);
+  drawPieceHelper(px, py, pRot, pgm_read_word(&colors[pType + 1]));
 }
 
 void erasePiece() {
@@ -647,7 +676,7 @@ void eraseGhost(int x, int y, int rot) {
           // piece.
           if (board[bx][by] > 0) {
             tft.fillRect(BOARD_X + bx * BLOCK_SIZE, screenY, BLOCK_SIZE - 1,
-                         BLOCK_SIZE - 1, colors[board[bx][by]]);
+                         BLOCK_SIZE - 1, pgm_read_word(&colors[board[bx][by]]));
           } else {
             tft.drawRect(BOARD_X + bx * BLOCK_SIZE, screenY, BLOCK_SIZE - 1,
                          BLOCK_SIZE - 1, C_BLACK);
@@ -665,7 +694,8 @@ void redrawBoard() {
     for (int y = 0; y < BOARD_H; y++) {
       if (board[x][y] > 0)
         tft.fillRect(BOARD_X + x * BLOCK_SIZE, BOARD_Y + y * BLOCK_SIZE,
-                     BLOCK_SIZE - 1, BLOCK_SIZE - 1, colors[board[x][y]]);
+                     BLOCK_SIZE - 1, BLOCK_SIZE - 1,
+                     pgm_read_word(&colors[board[x][y]]));
     }
   }
 }
