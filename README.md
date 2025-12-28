@@ -1,22 +1,14 @@
-# Project Meridian | ATMega328P-based Portable Game Console
+![Project Meridian Logo](https://axelespinal.com/projects/meridian/images/meridian_logo.JPEG)
 
-![Project Image](https://axelespinal.com/projects/images/meridian.webp)
+# PROJECT MERIDIAN | Open Source Portable Game Console
 
-A minimalist portable game console based on the ATMega328P-PU microcontroller.
+A fully open portable game console, powered by the ATMega328P microcontroller.
 
 Learn more about this project at https://axelespinal.com/projects/meridian.
 
-## Status
-**Work In Progress (WIP)**: The console is in early development stages. I need to finish the hardware selection, PCB design, and software development.
-
-## Hardware
-- **Microcontroller**: ATMega328P (same as Arduino Uno)
-- **Display**: Unvision ST7735 1.8" TFT
-- **Buttons**: 4-directional D-pad and 2 action buttons
-
 PCB and Schematics are available in the `kicad` directory. 
 
-## Software
+## Firmware
 The firmware is written in Arduino (C++). 
 
 - `arduino/firmware`: The main firmware for the console. Includes custom TFT library for the ST7735 display.
