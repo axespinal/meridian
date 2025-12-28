@@ -1,6 +1,6 @@
 ![Project Meridian Logo](https://axelespinal.com/projects/meridian/images/meridian_logo.JPEG)
 
-# PROJECT MERIDIAN | Open Source Portable Game Console
+# Project Meridian
 
 A fully open portable game console, powered by the ATMega328P microcontroller.
 
