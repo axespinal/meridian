@@ -6,7 +6,11 @@ A fully open portable game console, powered by the ATMega328P microcontroller.
 
 Learn more about this project at https://axelespinal.com/projects/meridian.
 
-PCB and Schematics are available in the `kicad` directory. 
+## **Project Meridian is still under development.** 
+
+Unfinished PCB and Schematics are available in the `kicad` directory.
+
+Firmware is available in the `arduino` directory. Pin configuration may change during development.
 
 ## Firmware
 The firmware is written in Arduino (C++). 
